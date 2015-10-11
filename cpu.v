@@ -161,6 +161,8 @@ module main();
                       ((x2_opcode == 1) || (x2_opcode == 6));
 
 
+    wire x2_ldHazard = (wb_isStore) && (wb_s == x2_ii);
+
     reg [3:0] x2_tReg = 0;
     reg [15:0]x2_ii = 0;
     reg [15:0]x2_jjj = 0;
@@ -181,8 +183,10 @@ module main();
     wire wb_isWrite = (wb_opcode == 0) || (wb_opcode == 1) || (wb_opcode == 4) || (wb_opcode == 5);
 
     reg [3:0]wb_tReg = 0;
+    reg wb_x2WasLdHazard = 0;
     wire [15:0]wb_writeVal = wb_opcode == 0 ? wb_ii :
                              wb_opcode == 1 ? (wb_aVal + wb_bVal) :
+                             (wb_opcode == 4 && wb_x2WasLdHazard) ? wb2_writeVal : 
                              wb_opcode == 4 ? wb_loadVal :
                              wb_opcode == 5 ? wb_loadVal : 
                              wb_opcode == 7 ? wb_aVal : 0;
@@ -195,6 +199,18 @@ module main();
     reg [15:0]wb_2prevWriteVal = 0;
     reg [3:0]wb_2prevTReg = 0;
     reg wb_2prevValid = 0;
+
+    /*****************************************************
+    ****St instruction hazards (self modifying code)******
+    *****************************************************/
+    wire wb_isStore = (wb_opcode == 7) && wb_valid;
+    wire wb_f1PcHazard = (wb_s == f1_pc) && wb_isStore && f1_valid;
+    wire wb_f2PcHazard = (wb_s == f2_pc) && wb_isStore && f2_valid;
+    wire wb_dPcHazard = (wb_s == d_pc) && wb_isStore && d_valid;
+    wire wb_rPcHazard = (wb_s == r_pc) && wb_isStore && r_valid;
+    wire wb_x1PcHazard = (wb_s == x1_pc) && wb_isStore && x1_valid;
+    wire wb_x2PcHazard = (wb_s == x2_pc) && wb_isStore && x2_valid;
+
 
 
     //Writeback 2
@@ -260,6 +276,7 @@ module main();
             x1_tReg <= r_tReg;
             x2_tReg <= x1_tReg;
             wb_tReg <= x2_tReg;
+//            wb_tReg <= (x2_opcode == 7) ? x2_s : x2_tReg;
             r_aReg <= d_aReg;
             r_bReg <= d_bReg;
             x1_aReg <= r_aReg;
@@ -267,12 +284,13 @@ module main();
             x2_aReg <= x1_aReg;
             x2_bReg <= x1_bReg;
             
+            wb_x2WasLdHazard <= x2_ldHazard;
             d_prevInst <= d_instruction;
 
 
             if(wb_valid)
             begin
-               if((wb_opcode == 0) || (wb_opcode == 1) || (wb_opcode == 4) || (wb_opcode == 5) || (wb_opcode == 7)) begin
+               if((wb_opcode == 0) || (wb_opcode == 1) || (wb_opcode == 4) || (wb_opcode == 5)) begin
                   f1_valid <= 1;
                   f2_valid <= f1_valid;
                   d_valid <= f2_valid;
@@ -338,7 +356,68 @@ module main();
                     end
                 end
                 4'h7 : begin //str
-                    pc <= d_isStall ? pc : pc + 1;
+                    if(wb_x2PcHazard) begin
+                        wb_valid <= 0;
+                        x2_valid <= 0;
+                        x1_valid <= 0;
+                        r_valid <= 0;
+                        d_valid <= 0;
+                        f2_valid <= 0;
+                        wb2_valid <= wb_valid;
+                        pc <= wb_s;
+                    end
+                    else if (wb_x1PcHazard) begin
+                        x2_valid <= 0;
+                        x1_valid <= 0;
+                        r_valid <= 0;
+                        d_valid <= 0;
+                        f2_valid <= 0;
+                        wb2_valid <= wb_valid;
+                        pc <= wb_s;
+
+                    end 
+                    else if (wb_rPcHazard) begin
+                        x1_valid <= 0;
+                        r_valid <= 0;
+                        d_valid <= 0;
+                        f2_valid <= 0;
+                        wb2_valid <= wb_valid;
+                        pc <= wb_s;
+
+                    end
+                    else if (wb_dPcHazard) begin
+                        r_valid <= 0;
+                        d_valid <= 0;
+                        f2_valid <= 0;
+                        wb2_valid <= wb_valid;
+                        pc <= wb_s;
+                    end
+                    else if (wb_f2PcHazard) begin
+                        d_valid <= 0;
+                        f2_valid <= 0;
+                        wb2_valid <= wb_valid;
+                        pc <= wb_s;
+
+                    end
+                    else if (wb_f1PcHazard) begin
+                        f2_valid <= 0;
+                        wb2_valid <= wb_valid;
+                        pc <= wb_s;
+                    end                    
+                      
+                    else begin
+                    
+                      pc <= d_isStall ? pc : pc + 1;
+                      f1_valid <= 1;
+                      f2_valid <= f1_valid;
+                      d_valid <= f2_valid;
+                      r_valid <= d_isStall ? 0 : d_valid;
+                      x1_valid <= r_valid;
+                      x2_valid <= x1_valid;
+                      wb_valid <= x2_valid;
+                      wb2_valid <= wb_valid;
+
+                    end
                 end
                 default: begin
                     $display("invalid opcode in exec %d",wb_opcode);
