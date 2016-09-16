@@ -25,47 +25,21 @@ module main();
     //Fetch 1
     //Time: t0
     reg f1_valid = 1;
-    reg f1_jumpTaken = 0; 
     wire [15:0]f1_pc = d_isStall ? f2_pc : pc;                      //for debug only
     mem i0(clk,f1_pc,d_memOut,x1_loadAddr,wb_loadVal, wb2_memWriteEnable, wb2_memWriteAddr, wb2_writeVal);
-    
-    /**************************
-    **Branch predictor buffer**
-    **************************/
-    reg [15:0]f1_predictionBuffer[4095:0];
-    reg [1:0]f1_predictionHistory[4095:0];
-
-    reg [15:0]k;
-    initial begin
-        for(k = 0; k < 4096; k = k + 1)
-        begin
-           f1_predictionBuffer[k] = 0; 
-           f1_predictionHistory[k] = 0; 
-        end
-    end
-
-    /*Need code to update prediction history, to get prediction history, 
-    to read from prediction buffer, to write to prediction buffer*/
-    
-    //pretty sure these are all fine
-    wire [7:0]f1_thisPcBufferAddress = f1_pc % 4096;
-    wire [1:0]f1_thisPcHistory = f1_predictionHistory[f1_thisPcBufferAddress];
-    wire [15:0]f1_thisPcBufferEntry = f1_predictionBuffer[f1_thisPcBufferAddress];
-    wire f1_thisPcPrediction = f1_thisPcBufferEntry[f1_thisPcHistory];
-    wire [15:0]f1_thisPcDest = f1_thisPcBufferEntry[15:4];
+    //wen, waddr, wdata
 
     /*************************
     ****FETCH 2 - TIME: t1***
     *************************/
     reg f2_valid = 0;
     reg [15:0]f2_pc = 0;
-    reg f2_jumpTaken;
+
 
     //Decode
     //Time: t2
     reg d_valid = 0;
     reg [15:0]d_pc = 0;
-    reg d_jumpTaken = 0;
 
     wire [15:0]d_memOut;                
     wire [15:0]wb_loadVal; 
@@ -107,7 +81,6 @@ module main();
     //We are waiting for regs values.
     reg [15:0]r_pc = 0;
     reg r_valid = 0;
-    reg r_jumpTaken = 0; 
     reg [15:0]r_instruction = 0;
     reg [3:0]r_opcode = 0;
     reg [3:0]r_aReg = 0;
@@ -121,7 +94,6 @@ module main();
     //Time: t4
     reg x1_valid = 0;
     reg [15:0]x1_pc = 0;
-    reg x1_jumpTaken = 0;
     wire [15:0]x1_regOut0;
     wire [15:0]x1_regOut1;
 
@@ -176,7 +148,6 @@ module main();
     //We are waiting for load values (or wasting time if not load...)
     reg [15:0]x2_pc = 0;
     reg x2_valid = 0;
-    reg x2_jumpTaken = 0; 
     reg [3:0]x2_opcode = 0;
     reg [3:0]x2_aReg = 0;
     reg [3:0]x2_bReg = 0;
@@ -201,10 +172,7 @@ module main();
     //Time t6
     reg [15:0]wb_pc = 0;
     reg wb_valid = 0;
-    reg wb_jumpTaken = 0; 
-//    wire wb_isHalt = (wb_opcode == 3) && wb_valid && (!wb_jumpTakenShouldntHave);
     wire wb_isHalt = (wb_opcode == 3) && wb_valid;
-//    wire wb_regWriteEnable = wb_isWrite && wb_valid && (!wb_jumpTakenShouldntHave);
     wire wb_regWriteEnable = wb_isWrite && wb_valid;
     reg [15:0]wb_aVal = 0;
     reg [15:0]wb_bVal = 0;
@@ -233,16 +201,6 @@ module main();
     reg wb_2prevValid = 0;
 
     /*****************************************************
-    *************Branch prediction/recovery code**********
-    *****************************************************/
-    wire wb_isJmp = wb_opcode == 2;
-    wire wb_isJeq = wb_opcode == 6; 
-    wire wb_jmpActual = wb_valid && wb_isJmp;                           //these will be changed when i implement cache
-    wire wb_jeqActual = wb_valid && (wb_aVal == wb_bVal) && wb_isJeq; 
-
-
-
-    /*****************************************************
     ****St instruction hazards (self modifying code)******
     *****************************************************/
     wire wb_isStore = (wb_opcode == 7) && wb_valid;
@@ -252,25 +210,6 @@ module main();
     wire wb_rPcHazard = (wb_s == r_pc) && wb_isStore && r_valid;
     wire wb_x1PcHazard = (wb_s == x1_pc) && wb_isStore && x1_valid;
     wire wb_x2PcHazard = (wb_s == x2_pc) && wb_isStore && x2_valid;
-    wire wb_storeHazard = wb_f1PcHazard || wb_f2PcHazard || wb_dPcHazard
-                          || wb_rPcHazard || wb_x1PcHazard || wb_x2PcHazard;
-
-
-    wire [1:0]wb_thisPcHistory = f1_predictionHistory[wb_pc % 4096];
-    wire [15:0]wb_thisPcBufferEntry = f1_predictionBuffer[wb_pc % 4096];
-    wire [1:0]wb_thisPcHistoryUpdate = (wb_thisPcHistory[0] << 1) | (wb_jmpActual | wb_jeqActual);
-    wire [7:0]wb_pcBufferAddress = wb_pc % 4096;
-    wire wb_jumpTakenShouldntHave = wb_jumpTaken && wb_valid && !wb_jmpActual;
-    wire wb_jmpDestinationMismatch = wb_jumpTakenShouldHave && (wb_jjj != x2_pc) && wb_valid;
-    wire wb_jeqDestinationMismatch = wb_jeqTakenShouldHave && ((wb_pc + wb_tReg) != x2_pc) && wb_valid;
-    wire wb_jumpTakenShouldHave = wb_jmpActual && wb_isJmp && wb_jumpTaken;
-    wire wb_jeqTakenShouldHave = wb_jeqActual && wb_isJeq && wb_jumpTaken;
-
-    wire wb_jumpNotTakenShouldHave = (wb_isJmp) && wb_jmpActual && (!wb_jumpTaken) && wb_valid;
-    wire wb_jeqNotTakenShouldHave = (wb_isJeq) && wb_jeqActual && (!wb_jumpTaken) && wb_valid;
-    wire wb_storePcUpdate = (wb_opcode == 7) && wb_valid && wb_storeHazard;
-
-
 
 
 
@@ -286,31 +225,19 @@ module main();
     reg wb2_isHalt = 0;
 
     always @(posedge clk) begin
-        wb_prevRegWriteEnable <= wb_regWriteEnable;
-        wb_prevWriteVal <= wb_writeVal;
-        wb_prevTReg <= wb_tReg;
-        wb_prevValid <= wb_valid;
-        wb_2prevRegWriteEnable <= wb_prevRegWriteEnable;
-        wb_2prevWriteVal <= wb_prevWriteVal;
-        wb_2prevTReg <= wb_prevTReg;
-        wb_2prevValid <= wb_prevValid;
+    wb_prevRegWriteEnable <= wb_regWriteEnable;
+    wb_prevWriteVal <= wb_writeVal;
+    wb_prevTReg <= wb_tReg;
+    wb_prevValid <= wb_valid;
+    wb_2prevRegWriteEnable <= wb_prevRegWriteEnable;
+    wb_2prevWriteVal <= wb_prevWriteVal;
+    wb_2prevTReg <= wb_prevTReg;
+    wb_2prevValid <= wb_prevValid;
 
-        wb2_isHalt <= wb_isHalt;
+    wb2_isHalt <= wb_isHalt;
 
     d_wasStall <= d_isStall;
     r_instruction <= d_instruction;
-
-    ////////Branch prediction code//////////////
-             f1_jumpTaken <= 0; 
-             f2_jumpTaken <= f1_thisPcPrediction ? 1 : f1_jumpTaken;
-//             f2_jumpTaken <= f1_jumpTaken;
-             d_jumpTaken <= f2_jumpTaken;
-             r_jumpTaken <= d_jumpTaken;
-             x1_jumpTaken <= r_jumpTaken;
-             x2_jumpTaken <= x1_jumpTaken;
-             wb_jumpTaken <= x2_jumpTaken; 
-
-
 
     ///////Pass PC along pipeline/////
             f2_pc <= d_isStall ? f2_pc : f1_pc;
@@ -349,6 +276,7 @@ module main();
             x1_tReg <= r_tReg;
             x2_tReg <= x1_tReg;
             wb_tReg <= x2_tReg;
+//            wb_tReg <= (x2_opcode == 7) ? x2_s : x2_tReg;
             r_aReg <= d_aReg;
             r_bReg <= d_bReg;
             x1_aReg <= r_aReg;
@@ -360,29 +288,63 @@ module main();
             d_prevInst <= d_instruction;
 
 
-             ///////////PC UPDATE/////////////
+            if(wb_valid)
+            begin
+               if((wb_opcode == 0) || (wb_opcode == 1) || (wb_opcode == 4) || (wb_opcode == 5)) begin
+                  f1_valid <= 1;
+                  f2_valid <= f1_valid;
+                  d_valid <= f2_valid;
+                  r_valid <= d_isStall ? 0 : d_valid;
+                  x1_valid <= r_valid;
+                  x2_valid <= x1_valid;
+                  wb_valid <= x2_valid;
+                  wb2_valid <= wb_valid;
+               end
+            case (wb_opcode)
+                4'h0 : begin // mov
+                    pc <=  d_isStall ? pc :  pc + 1;
+                end
 
-             if(wb_jumpNotTakenShouldHave)
-                  pc <= wb_jjj;
-             else if(wb_jumpTakenShouldntHave)
-                  pc <= wb_pc + 1;
-             else if(wb_jeqNotTakenShouldHave)
-                  pc <= wb_pc + wb_tReg;
-             else if(wb_jmpDestinationMismatch)
-                  pc <= wb_jjj;
-             else if(wb_jeqDestinationMismatch)
-                  pc <= wb_tReg + wb_pc;
-             else if(wb_storePcUpdate)
-                  pc <= wb_s;
-             else if(f1_thisPcPrediction)
-                  pc <= f1_thisPcDest; //problem! what about pcs that are congruent but aren't jumps? then this tries to make prediction
-             else if(d_isStall)
-                  pc <= pc;
-             else
-                  pc <= pc + 1; 
+                4'h1 : begin // add
+                    pc <=  d_isStall ? pc : pc + 1;
+                end
 
-             ///////////VALID BITS UPDATE//////////////
-             if(!wb_valid) begin
+                4'h2 : begin // jmp
+                   pc <= wb_jjj;
+                   f2_valid <= 0;
+                   d_valid <= 0;
+                   r_valid <= 0;
+                   x1_valid <= 0;
+                   x2_valid <= 0;
+                   wb_valid <= 0;
+                   wb2_valid <= wb_valid;
+                end 
+
+                4'h3 : begin // halt
+                end
+
+                4'h4 : begin // ld
+                   pc <=  d_isStall ? pc : pc + 1;
+                end
+
+                4'h5 : begin // ldr
+                    pc <= d_isStall ? pc : pc + 1;
+                end
+
+                4'h6 : begin //jeq
+                    if(wb_aVal == wb_bVal) begin
+                      pc <= wb_pc + wb_tReg;
+                      f1_valid <= 1;
+                      f2_valid <= 0;
+                      d_valid <= 0; 
+                      r_valid <= 0;
+                      x1_valid <= 0;
+                      x2_valid <= 0;
+                      wb_valid <= 0;	
+                      wb2_valid <= wb_valid;
+                      end
+                    else begin
+                      pc <= d_isStall ? pc : pc + 1;
                       f1_valid <= 1;
                       f2_valid <= f1_valid;
                       d_valid <= f2_valid;
@@ -391,120 +353,7 @@ module main();
                       x2_valid <= x1_valid;
                       wb_valid <= x2_valid;
                       wb2_valid <= wb_valid;
-             end
-             else if(wb_jmpDestinationMismatch || wb_jeqDestinationMismatch) begin
-                       f1_valid <= 1;
-                       f2_valid <= 0;
-                       d_valid <= 0;
-                       r_valid <= 0;
-                       x1_valid <= 0;
-                       x2_valid <= 0;
-                       wb_valid <= 0;
-                       wb2_valid <= wb_valid;
-             end
-             else if(wb_jumpTakenShouldntHave) begin
-                       f1_valid <= 1;
-                       f2_valid <= 0;
-                       d_valid <= 0;
-                       r_valid <= 0;
-                       x1_valid <= 0;
-                       x2_valid <= 0;
-                       wb_valid <= 0;
-                       wb2_valid <= wb_valid;
-             end
-             else if(wb_opcode == 2) begin
-                //Actual and taken don't match
-                if(wb_jumpNotTakenShouldHave) begin
-                       f1_valid <= 1;
-                       f2_valid <= 0;
-                       d_valid <= 0;
-                       r_valid <= 0;
-                       x1_valid <= 0;
-                       x2_valid <= 0;
-                       wb_valid <= 0;
-                       wb2_valid <= wb_valid;
-                end
-                else begin
-                  f1_valid <= 1;
-                  f2_valid <= f1_valid;
-                  d_valid <= f2_valid;
-                  r_valid <= d_isStall ? 0 : d_valid;
-                  x1_valid <= r_valid;
-                  x2_valid <= x1_valid;
-                  wb_valid <= x2_valid;
-                  wb2_valid <= wb_valid;
-                end
-             end
-             else if(wb_opcode == 6) begin
-                if(wb_jeqNotTakenShouldHave) begin
-                       f1_valid <= 1;
-                       f2_valid <= 0;
-                       d_valid <= 0;
-                       r_valid <= 0;
-                       x1_valid <= 0;
-                       x2_valid <= 0;
-                       wb_valid <= 0;
-                       wb2_valid <= wb_valid;
-               end
-                else begin
-                  f1_valid <= 1;
-                  f2_valid <= f1_valid;
-                  d_valid <= f2_valid;
-                  r_valid <= d_isStall ? 0 : d_valid;
-                  x1_valid <= r_valid;
-                  x2_valid <= x1_valid;
-                  wb_valid <= x2_valid;
-                  wb2_valid <= wb_valid;
-                end
-             end
-             else if(wb_opcode == 7) begin
-             
-             end
-             else begin
-                  f1_valid <= 1;
-                  f2_valid <= f1_valid;
-                  d_valid <= f2_valid;
-                  r_valid <= d_isStall ? 0 : d_valid;
-                  x1_valid <= r_valid;
-                  x2_valid <= x1_valid;
-                  wb_valid <= x2_valid;
-                  wb2_valid <= wb_valid;
-             end
- 
-
-            if(wb_valid) begin
-               if(wb_jumpTaken || wb_isJmp || wb_isJeq) begin
-                      f1_predictionHistory[wb_pcBufferAddress] <= wb_thisPcHistoryUpdate;
-                       f1_predictionBuffer[wb_pcBufferAddress][wb_thisPcHistory] <= wb_jmpActual;
-                       f1_predictionBuffer[wb_pcBufferAddress][15:4] <= wb_jmpActual ? wb_jjj :
-                                                                        wb_jeqActual ? wb_pc + wb_tReg
-                                                                : f1_predictionBuffer[wb_pcBufferAddress][15:4];
-
-               end
-
-            case (wb_opcode)
-                4'h0 : begin // mov
-
-                end
-
-                4'h1 : begin // add
-
-                end
-
-                4'h2 : begin // jmp
-                   
-                end 
-
-                4'h3 : begin // halt
-                end
-
-                4'h4 : begin // ld
-                end
-
-                4'h5 : begin // ldr
-                end
-
-                4'h6 : begin //jeq
+                    end
                 end
                 4'h7 : begin //str
                     if(wb_x2PcHazard) begin
@@ -515,6 +364,7 @@ module main();
                         d_valid <= 0;
                         f2_valid <= 0;
                         wb2_valid <= wb_valid;
+                        pc <= wb_s;
                     end
                     else if (wb_x1PcHazard) begin
                         x2_valid <= 0;
@@ -523,6 +373,7 @@ module main();
                         d_valid <= 0;
                         f2_valid <= 0;
                         wb2_valid <= wb_valid;
+                        pc <= wb_s;
 
                     end 
                     else if (wb_rPcHazard) begin
@@ -531,6 +382,7 @@ module main();
                         d_valid <= 0;
                         f2_valid <= 0;
                         wb2_valid <= wb_valid;
+                        pc <= wb_s;
 
                     end
                     else if (wb_dPcHazard) begin
@@ -538,20 +390,24 @@ module main();
                         d_valid <= 0;
                         f2_valid <= 0;
                         wb2_valid <= wb_valid;
+                        pc <= wb_s;
                     end
                     else if (wb_f2PcHazard) begin
                         d_valid <= 0;
                         f2_valid <= 0;
                         wb2_valid <= wb_valid;
+                        pc <= wb_s;
 
                     end
                     else if (wb_f1PcHazard) begin
                         f2_valid <= 0;
                         wb2_valid <= wb_valid;
+                        pc <= wb_s;
                     end                    
                       
                     else begin
                     
+                      pc <= d_isStall ? pc : pc + 1;
                       f1_valid <= 1;
                       f2_valid <= f1_valid;
                       d_valid <= f2_valid;
@@ -568,6 +424,17 @@ module main();
                     $finish;
                 end
             endcase
+            end
+            else begin
+                    f1_valid <= 1;
+                    f2_valid <= f1_valid;
+                    d_valid <= f2_valid;
+                    r_valid <= d_isStall ? 0 : d_valid;
+                    x1_valid <= r_valid;
+                    x2_valid <= x1_valid;
+                    wb_valid <= x2_valid;
+                    wb2_valid <= wb_valid;
+                    pc <= d_isStall ? pc : pc + 1;
             end
 
     end
